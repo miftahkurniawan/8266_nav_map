@@ -1,0 +1,2015 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>NavOSRM — Real-Time Navigation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#0f0f13;
+  --panel:rgba(15,15,19,0.96);
+  --card:#1a1a22;
+  --card2:#222230;
+  --border:rgba(255,255,255,0.08);
+  --text:#f0f0f8;
+  --muted:#8888aa;
+  --blue:#4c8cf8;
+  --green:#2ecc8a;
+  --orange:#f5a623;
+  --red:#f55252;
+  --r:16px;
+}
+html,body{height:100%;overflow:hidden;font-family:'Inter',sans-serif;background:var(--bg);color:var(--text)}
+
+/* ═══════════════════════════════════
+   MAP
+═══════════════════════════════════ */
+#map{
+  position:fixed;inset:0;z-index:0;
+  transition:bottom 0.4s cubic-bezier(.4,0,.2,1);
+}
+#map.nav-active{bottom:220px}
+#map.dest-active{bottom:200px}
+
+.leaflet-control-zoom{display:none}
+.leaflet-container{background:#1a1a2e}
+
+/* User location pulse */
+.user-dot{
+  width:20px;height:20px;
+  background:var(--blue);
+  border:3px solid #fff;
+  border-radius:50%;
+  box-shadow:0 0 0 0 rgba(76,140,248,0.5);
+  animation:pulse 2s infinite;
+}
+@keyframes pulse{
+  0%{box-shadow:0 0 0 0 rgba(76,140,248,0.5)}
+  70%{box-shadow:0 0 0 14px rgba(76,140,248,0)}
+  100%{box-shadow:0 0 0 0 rgba(76,140,248,0)}
+}
+.user-heading{
+  width:0;height:0;
+  border-left:7px solid transparent;
+  border-right:7px solid transparent;
+  border-bottom:16px solid var(--blue);
+  filter:drop-shadow(0 0 6px var(--blue));
+  transform-origin:50% 100%;
+}
+
+/* ═══════════════════════════════════
+   TOP SEARCH BAR
+═══════════════════════════════════ */
+#topBar{
+  position:fixed;top:env(safe-area-inset-top,0);left:0;right:0;
+  padding:12px 12px 0;
+  z-index:1000;
+  pointer-events:none;
+}
+.search-wrap{
+  pointer-events:all;
+  display:flex;gap:8px;align-items:center;
+}
+.search-field{
+  flex:1;
+  background:var(--panel);
+  backdrop-filter:blur(20px);
+  -webkit-backdrop-filter:blur(20px);
+  border:1px solid var(--border);
+  border-radius:var(--r);
+  height:50px;
+  display:flex;align-items:center;gap:10px;
+  padding:0 14px;
+  box-shadow:0 8px 32px rgba(0,0,0,0.6);
+  transition:border-color 0.2s;
+}
+.search-field:focus-within{border-color:var(--blue)}
+.search-field svg{flex-shrink:0;opacity:0.5}
+#searchInput{
+  flex:1;background:none;border:none;outline:none;
+  color:var(--text);font-family:'Inter',sans-serif;
+  font-size:15px;font-weight:500;
+}
+#searchInput::placeholder{color:var(--muted);font-weight:400}
+.search-clear{
+  background:none;border:none;cursor:pointer;
+  color:var(--muted);font-size:18px;padding:4px;
+  display:none;
+}
+.icon-btn{
+  width:50px;height:50px;border-radius:var(--r);
+  background:var(--panel);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;
+  box-shadow:0 8px 32px rgba(0,0,0,0.6);
+  transition:background 0.15s;
+  color:var(--text);
+}
+.icon-btn:active{background:rgba(255,255,255,0.08)}
+.icon-btn.active{background:var(--blue);border-color:var(--blue);color:#fff}
+
+/* Search results */
+#searchResults{
+  margin-top:8px;
+  background:var(--panel);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border:1px solid var(--border);
+  border-radius:var(--r);
+  overflow:hidden;display:none;
+  box-shadow:0 8px 32px rgba(0,0,0,0.7);
+  max-height:55vh;overflow-y:auto;
+}
+.sr-item{
+  display:flex;align-items:center;gap:12px;
+  padding:13px 16px;cursor:pointer;
+  border-bottom:1px solid var(--border);
+  transition:background 0.1s;
+}
+.sr-item:last-child{border-bottom:none}
+.sr-item:active,.sr-item:hover{background:rgba(76,140,248,0.08)}
+.sr-icon{
+  width:38px;height:38px;border-radius:10px;
+  background:var(--card2);
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;color:var(--muted);
+}
+.sr-text{flex:1;min-width:0}
+.sr-name{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sr-addr{font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ═══════════════════════════════════
+   BOTTOM PANEL
+═══════════════════════════════════ */
+#bottomPanel{
+  position:fixed;bottom:0;left:0;right:0;
+  z-index:900;
+  padding-bottom:env(safe-area-inset-bottom,0);
+  transition:transform 0.4s cubic-bezier(.4,0,.2,1);
+}
+
+/* ── IDLE ── */
+#stateIdle{
+  background:var(--panel);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border-top:1px solid var(--border);
+  padding:16px;
+  display:flex;flex-direction:column;gap:10px;
+}
+.mqtt-row{display:flex;gap:8px;align-items:center}
+.mqtt-input{
+  flex:1;background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;padding:9px 12px;
+  color:var(--text);font-family:'Inter',sans-serif;
+  font-size:13px;outline:none;
+  transition:border-color 0.2s;
+}
+.mqtt-input:focus{border-color:var(--blue)}
+.status-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:var(--muted);transition:background 0.3s;flex-shrink:0;
+}
+.status-dot.ok{background:var(--green);box-shadow:0 0 8px var(--green)}
+.status-dot.fail{background:var(--red)}
+.btn{
+  height:44px;border:none;border-radius:10px;
+  font-family:'Inter',sans-serif;font-size:14px;font-weight:600;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;
+  transition:all 0.15s;
+}
+.btn-blue{background:var(--blue);color:#fff}
+.btn-blue:active{filter:brightness(0.85)}
+.btn-ghost{background:var(--card);color:var(--text);border:1px solid var(--border)}
+.btn-ghost:active{background:var(--card2)}
+.btn-red{background:var(--red);color:#fff}
+.btn-green{background:var(--green);color:#fff}
+
+/* ── DESTINATION SELECTED ── */
+#stateDest{
+  background:var(--panel);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border-top:1px solid var(--border);
+  padding:16px;display:none;
+}
+.dest-info{
+  background:var(--card);border-radius:var(--r);
+  padding:14px;margin-bottom:12px;
+}
+.dest-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+.dest-name{font-size:16px;font-weight:700}
+.dest-meta{font-size:12px;color:var(--muted);margin-top:4px}
+.route-pills{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;padding-bottom:2px}
+.route-pill{
+  flex-shrink:0;
+  background:var(--card);border:1px solid var(--border);
+  border-radius:20px;padding:5px 12px;
+  font-size:12px;font-weight:600;cursor:pointer;
+  transition:all 0.15s;white-space:nowrap;
+}
+.route-pill.active{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn-row{display:flex;gap:8px}
+
+/* ── NAVIGATING ── */
+#stateNav{
+  display:none;
+  background:var(--panel);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border-top:1px solid var(--border);
+}
+
+/* Maneuver banner */
+.maneuver-banner{
+  padding:14px 16px;
+  display:flex;align-items:center;gap:14px;
+  position:relative;overflow:hidden;
+  min-height:90px;
+  transition:background 0.4s;
+}
+.maneuver-banner.col-blue{background:linear-gradient(135deg,#1a3a6e,#2a4a8e)}
+.maneuver-banner.col-orange{background:linear-gradient(135deg,#6e3a00,#8e5000)}
+.maneuver-banner.col-green{background:linear-gradient(135deg,#0a5a30,#0e7040)}
+.maneuver-banner.col-red{background:linear-gradient(135deg,#5a1010,#7a1818)}
+
+.m-arrow-wrap{
+  width:60px;height:60px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+}
+.m-arrow-wrap svg{width:60px;height:60px;filter:drop-shadow(0 2px 8px rgba(0,0,0,0.4))}
+
+.m-dist-block{flex:1;min-width:0}
+.m-dist{
+  font-size:38px;font-weight:800;line-height:1;
+  color:#fff;letter-spacing:-1px;
+}
+.m-dist-unit{font-size:18px;font-weight:500;margin-left:2px}
+.m-street{
+  font-size:14px;font-weight:500;color:rgba(255,255,255,0.8);
+  margin-top:4px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+
+/* Next step preview */
+.next-preview{
+  background:rgba(0,0,0,0.25);
+  border-radius:10px;padding:8px 12px;
+  display:flex;align-items:center;gap:8px;
+  flex-shrink:0;max-width:110px;
+}
+.next-preview svg{width:20px;height:20px;flex-shrink:0}
+.next-text{font-size:11px;color:rgba(255,255,255,0.75);line-height:1.3}
+.next-dist{font-weight:700;font-size:12px;color:#fff}
+
+/* Stats bar */
+.stats-bar{
+  display:flex;border-top:1px solid var(--border);
+}
+.stat{
+  flex:1;padding:10px 0;text-align:center;position:relative;
+}
+.stat+.stat::before{
+  content:'';position:absolute;left:0;top:20%;bottom:20%;
+  width:1px;background:var(--border);
+}
+.stat-val{
+  font-size:18px;font-weight:700;line-height:1;
+  font-variant-numeric:tabular-nums;
+}
+.stat-lbl{font-size:10px;color:var(--muted);margin-top:3px;text-transform:uppercase;letter-spacing:0.5px}
+
+.stop-btn-row{
+  padding:10px 16px 8px;display:flex;gap:8px;
+}
+
+/* ── REROUTING TOAST ── */
+#rerouteToast{
+  position:fixed;top:80px;left:50%;transform:translateX(-50%);
+  background:var(--orange);color:#fff;
+  border-radius:20px;padding:8px 18px;
+  font-size:13px;font-weight:600;
+  z-index:2000;display:none;
+  box-shadow:0 4px 20px rgba(0,0,0,0.4);
+  animation:fadeIn 0.3s ease;
+}
+@keyframes fadeIn{from{opacity:0;transform:translateX(-50%) translateY(-8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+
+/* ── STEP LIST DRAWER ── */
+#stepDrawer{
+  position:fixed;inset:0;z-index:2000;
+  background:rgba(0,0,0,0.7);
+  backdrop-filter:blur(4px);
+  display:none;align-items:flex-end;
+}
+.step-drawer-inner{
+  background:var(--card);
+  border-radius:var(--r) var(--r) 0 0;
+  width:100%;max-height:75vh;
+  overflow-y:auto;
+  padding:0 0 env(safe-area-inset-bottom,0);
+}
+.step-drawer-handle{
+  width:40px;height:4px;background:var(--muted);
+  border-radius:2px;margin:12px auto 8px;
+}
+.step-drawer-title{
+  font-size:16px;font-weight:700;padding:0 16px 12px;
+  border-bottom:1px solid var(--border);
+}
+.step-item{
+  display:flex;align-items:flex-start;gap:12px;
+  padding:14px 16px;border-bottom:1px solid var(--border);
+}
+.step-item.current{background:rgba(76,140,248,0.1)}
+.step-icon{
+  width:36px;height:36px;border-radius:10px;
+  background:var(--card2);
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;margin-top:1px;
+}
+.step-icon svg{width:20px;height:20px}
+.step-text{flex:1}
+.step-instr{font-size:14px;font-weight:500;margin-bottom:3px}
+.step-dist{font-size:12px;color:var(--muted)}
+
+/* ── KML DRAWER ── */
+#kmlDrawer{
+  position:fixed;inset:0;z-index:2000;
+  background:rgba(0,0,0,0.7);
+  backdrop-filter:blur(4px);
+  display:none;align-items:flex-end;
+}
+.kml-drawer-inner{
+  background:var(--card);
+  border-radius:var(--r) var(--r) 0 0;
+  width:100%;max-height:80vh;
+  display:flex;flex-direction:column;
+}
+.kml-drawer-head{
+  padding:12px 16px 0;flex-shrink:0;
+}
+.kml-drawer-handle{width:40px;height:4px;background:var(--muted);border-radius:2px;margin:0 auto 12px}
+.kml-drawer-title{font-size:16px;font-weight:700;margin-bottom:4px}
+.kml-drawer-sub{font-size:12px;color:var(--muted);margin-bottom:12px}
+.kml-tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:0;padding:0}
+.kml-tab{
+  flex:1;padding:9px 4px;text-align:center;
+  font-size:12px;font-weight:600;
+  cursor:pointer;color:var(--muted);
+  border-bottom:2px solid transparent;
+  transition:all 0.15s;
+}
+.kml-tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+.kml-scroll{flex:1;overflow-y:auto;padding:8px 0 env(safe-area-inset-bottom,8px)}
+.kml-section-title{
+  font-size:10px;color:var(--muted);
+  text-transform:uppercase;letter-spacing:1px;
+  padding:10px 16px 4px;
+}
+.kml-item{
+  display:flex;align-items:center;gap:12px;
+  padding:11px 16px;cursor:pointer;
+  border-bottom:1px solid var(--border);
+  transition:background 0.1s;
+}
+.kml-item:last-child{border-bottom:none}
+.kml-item:active,.kml-item:hover{background:rgba(76,140,248,0.08)}
+.kml-item-icon{
+  width:36px;height:36px;border-radius:10px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:16px;
+}
+.kml-item-text{flex:1;min-width:0}
+.kml-item-name{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kml-item-meta{font-size:12px;color:var(--muted);margin-top:2px}
+.kml-item-action{
+  font-size:12px;font-weight:600;
+  color:var(--blue);padding:6px 10px;
+  background:rgba(76,140,248,0.12);
+  border-radius:8px;white-space:nowrap;flex-shrink:0;
+}
+.kml-empty{
+  padding:40px 16px;text-align:center;
+  color:var(--muted);font-size:14px;
+}
+.kml-track-item{border-left:4px solid;}
+/* Upload drop zone */
+#kmlUploadZone{
+  border:2px dashed var(--border);border-radius:var(--r);
+  padding:24px;text-align:center;cursor:pointer;
+  transition:all 0.2s;margin:12px 16px;
+}
+#kmlUploadZone.drag-over{border-color:var(--blue);background:rgba(76,140,248,0.08)}
+#kmlUploadZone svg{opacity:0.4;margin-bottom:8px}
+#kmlUploadZone p{font-size:13px;color:var(--muted);margin:4px 0}
+#kmlUploadZone strong{color:var(--text)}
+#kmlFileInput{display:none}
+.kml-loaded-bar{
+  display:flex;align-items:center;gap:10px;
+  padding:10px 16px;
+  background:rgba(46,204,138,0.1);
+  border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+.kml-loaded-bar svg{color:var(--green);flex-shrink:0}
+.kml-loaded-name{font-size:13px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btn-kml-clear{background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:4px}
+
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--card2);border-radius:2px}
+
+/* Loading */
+#loadingOverlay{
+  position:fixed;inset:0;background:var(--bg);
+  display:flex;align-items:center;justify-content:center;
+  z-index:9999;flex-direction:column;gap:16px;
+  transition:opacity 0.4s;
+}
+.spinner{
+  width:40px;height:40px;border:3px solid var(--card2);
+  border-top-color:var(--blue);border-radius:50%;
+  animation:spin 0.8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="loadingOverlay">
+  <div class="spinner"></div>
+  <div style="font-size:13px;color:var(--muted)">Menginisialisasi GPS...</div>
+</div>
+
+<!-- Map -->
+<div id="map"></div>
+
+<!-- Top bar -->
+<div id="topBar">
+  <div class="search-wrap">
+    <div class="search-field">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input id="searchInput" type="text" placeholder="Cari tujuan...">
+      <button class="search-clear" id="searchClear">✕</button>
+    </div>
+    <button class="icon-btn" id="btnLocate" title="Lokasi saya">
+      <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg>
+    </button>
+    <button class="icon-btn" id="btnKml" title="Upload KML/KMZ">
+      <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M21 10H3M16 2v4M8 2v4M3 6h18v16H3z"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
+    </button>
+    <button class="icon-btn" id="btnSteps" title="Daftar langkah" style="display:none">
+      <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+    </button>
+  </div>
+  <div id="searchResults"></div>
+</div>
+
+<!-- Rerouting toast -->
+<div id="rerouteToast">🔄 Menghitung ulang rute...</div>
+
+<!-- Bottom panel -->
+<div id="bottomPanel">
+
+  <!-- State: IDLE / MQTT config -->
+  <div id="stateIdle">
+    <div class="mqtt-row">
+      <div class="status-dot" id="dotMqtt"></div>
+      <input class="mqtt-input" id="mqttBroker" type="text" placeholder="broker.emqx.io:8084" value="broker.emqx.io:8084">
+      <input class="mqtt-input" id="mqttChannel" type="text" placeholder="Channel: NAVKU001" value="NAVKU001" style="max-width:130px">
+      <button class="btn btn-blue" id="btnMqttConnect" style="flex-shrink:0;padding:0 14px">
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);text-align:center">
+      Cari tujuan di atas atau ketuk peta untuk navigasi
+    </div>
+  </div>
+
+  <!-- State: DESTINATION SELECTED -->
+  <div id="stateDest">
+    <div class="dest-info">
+      <div class="dest-label">Tujuan</div>
+      <div class="dest-name" id="destName">—</div>
+      <div class="dest-meta" id="destMeta">—</div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" id="btnCancelDest" style="width:44px;flex:none">✕</button>
+      <button class="btn btn-green" id="btnStartNav" style="flex:1">
+        <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polygon points="5,3 19,12 5,21"/></svg>
+        Mulai Navigasi
+      </button>
+    </div>
+  </div>
+
+  <!-- State: NAVIGATING -->
+  <div id="stateNav">
+    <!-- Maneuver banner -->
+    <div class="maneuver-banner col-blue" id="maneuverBanner">
+      <div class="m-arrow-wrap" id="mArrow"></div>
+      <div class="m-dist-block">
+        <div class="m-dist" id="mDist">—</div>
+        <div class="m-street" id="mStreet">—</div>
+      </div>
+      <div class="next-preview" id="nextPreview" style="display:none">
+        <div id="nextArrowSvg"></div>
+        <div class="next-text">
+          <div style="font-size:10px;opacity:0.7">Lalu</div>
+          <div class="next-dist" id="nextDistText">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats bar -->
+    <div class="stats-bar">
+      <div class="stat">
+        <div class="stat-val" id="statEta">—</div>
+        <div class="stat-lbl">Tiba</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val" id="statRemain">—</div>
+        <div class="stat-lbl">Sisa</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val" id="statSpeed">0</div>
+        <div class="stat-lbl">km/h</div>
+      </div>
+    </div>
+
+    <!-- Stop button -->
+    <div class="stop-btn-row">
+      <button class="btn btn-ghost" id="btnReroute" style="flex:none;padding:0 14px">
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polyline points="23,4 23,10 17,10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      </button>
+      <button class="btn btn-red" id="btnStopNav" style="flex:1">
+        Berhenti Navigasi
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Step list drawer -->
+<div id="stepDrawer">
+  <div class="step-drawer-inner">
+    <div class="step-drawer-handle"></div>
+    <div class="step-drawer-title">Panduan Rute</div>
+    <div id="stepList"></div>
+  </div>
+</div>
+
+<!-- KML / KMZ drawer -->
+<div id="kmlDrawer">
+  <div class="kml-drawer-inner">
+    <div class="kml-drawer-head">
+      <div class="kml-drawer-handle"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div class="kml-drawer-title">File KML / KMZ</div>
+        <button class="btn-kml-clear" id="btnKmlClose">✕</button>
+      </div>
+      <div class="kml-drawer-sub" id="kmlSubText">Upload file KML atau KMZ untuk tampilkan di peta</div>
+    </div>
+    <!-- Loaded bar (muncul setelah upload) -->
+    <div class="kml-loaded-bar" id="kmlLoadedBar" style="display:none">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polyline points="20,6 9,17 4,12"/></svg>
+      <span class="kml-loaded-name" id="kmlLoadedName">—</span>
+      <button class="btn-kml-clear" id="btnKmlReset" title="Hapus file">✕</button>
+    </div>
+    <!-- Tabs -->
+    <div class="kml-tabs" id="kmlTabs" style="display:none">
+      <div class="kml-tab active" data-tab="waypoints">📍 Waypoint</div>
+      <div class="kml-tab" data-tab="tracks">🛣️ Track</div>
+      <div class="kml-tab" data-tab="info">ℹ️ Info</div>
+    </div>
+    <!-- Content -->
+    <div class="kml-scroll" id="kmlContent">
+      <!-- Upload zone -->
+      <div id="kmlUploadZone">
+        <input type="file" id="kmlFileInput" accept=".kml,.kmz">
+        <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" style="display:block;margin:0 auto 8px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <p><strong>Ketuk untuk upload</strong></p>
+        <p>atau drag & drop file</p>
+        <p style="margin-top:8px;font-size:11px;opacity:0.6">.kml &nbsp;·&nbsp; .kmz</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════
+   NavOSRM — Real-time GPS Navigation
+   OSRM routing + Leaflet map + MQTT → ESP8266
+═══════════════════════════════════════════════════ */
+
+// ── CONFIG ────────────────────────────────────────
+const OSRM_BASE    = 'https://router.project-osrm.org/route/v1/driving';
+const NOMINATIM    = 'https://nominatim.openstreetmap.org';
+const REROUTE_DIST = 50;   // meter — reroute jika melenceng lebih dari ini
+const UPDATE_INTERVAL = 1500; // ms update rate saat navigasi
+
+// ── MAP INIT ──────────────────────────────────────
+const map = L.map('map', {
+  zoomControl: false,
+  attributionControl: false,
+  rotate: true
+}).setView([-6.2, 106.8], 15);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  maxZoom: 19, subdomains: 'abcd'
+}).addTo(map);
+
+// Attribution kecil
+L.control.attribution({position:'bottomleft'}).addTo(map);
+
+// ── STATE ─────────────────────────────────────────
+let userPos    = null;   // {lat, lng, heading, speed}
+let destPos    = null;   // {lat, lng, name}
+let route      = null;   // OSRM route object
+let steps      = [];     // array step navigasi
+let stepIdx    = 0;      // step saat ini
+let navActive  = false;
+let watchId    = null;
+let mqttClient = null;
+let mqttOk     = false;
+let txCount    = 0;
+let navTimer   = null;
+let searchDebounce = null;
+let autoCenter = true;   // ikuti posisi user di peta
+
+// KML state
+let kmlData    = null;   // {name, waypoints:[], tracks:[], polygons:[]}
+let kmlLayers  = [];     // leaflet layers dari KML
+let kmlTab     = 'waypoints'; // tab aktif
+
+// KML Track Navigation state
+let kmlTrackMode   = false;   // true = navigasi ikuti track KML, tidak pakai OSRM
+let kmlTrackCoords = [];      // [[lat,lng], ...] titik-titik track aktif
+let kmlTrackIdx    = 0;       // indeks titik track saat ini
+let kmlTrackName   = '';      // nama track aktif
+let kmlTrackColor  = '#4c8cf8';
+
+// ── LAYERS ────────────────────────────────────────
+let userMarker    = null;
+let destMarker    = null;
+let routeLayer    = null;
+let passedLayer   = null;
+let waypointLayer = L.layerGroup().addTo(map);
+
+// ── ARROW SVG BUILDER ─────────────────────────────
+function arrowSvg(type, size=60, color='#fff') {
+  const s = size, h = size;
+  const paths = {
+    'straight':       `<line x1="${s/2}" y1="${h*0.85}" x2="${s/2}" y2="${h*0.25}" stroke="${color}" stroke-width="5" stroke-linecap="round"/>
+                       <polyline points="${s/2-10},${h*0.3} ${s/2},${h*0.12} ${s/2+10},${h*0.3}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>`,
+    'turn-right':     `<path d="M${s/2-8} ${h*0.85} L${s/2-8} ${h*0.45} Q${s/2-8} ${h*0.2} ${s/2+12} ${h*0.2} L${s*0.78} ${h*0.2}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round"/>
+                       <polyline points="${s*0.72},${h*0.1} ${s*0.82},${h*0.2} ${s*0.72},${h*0.3}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>`,
+    'turn-left':      `<path d="M${s/2+8} ${h*0.85} L${s/2+8} ${h*0.45} Q${s/2+8} ${h*0.2} ${s/2-12} ${h*0.2} L${s*0.22} ${h*0.2}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round"/>
+                       <polyline points="${s*0.28},${h*0.1} ${s*0.18},${h*0.2} ${s*0.28},${h*0.3}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>`,
+    'turn-slight-right': `<path d="M${s/2} ${h*0.85} L${s/2} ${h*0.55} Q${s/2} ${h*0.2} ${s*0.75} ${h*0.15}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round"/>
+                          <polyline points="${s*0.68},${h*0.08} ${s*0.78},${h*0.15} ${s*0.7},${h*0.26}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>`,
+    'turn-slight-left': `<path d="M${s/2} ${h*0.85} L${s/2} ${h*0.55} Q${s/2} ${h*0.2} ${s*0.25} ${h*0.15}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round"/>
+                         <polyline points="${s*0.32},${h*0.08} ${s*0.22},${h*0.15} ${s*0.3},${h*0.26}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>`,
+    'turn-sharp-right': `<path d="M${s/2} ${h*0.85} L${s/2} ${h*0.6} Q${s/2} ${h*0.35} ${s*0.82} ${h*0.3}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round"/>
+                         <polyline points="${s*0.74},${h*0.22} ${s*0.84},${h*0.3} ${s*0.76},${h*0.42}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>`,
+    'turn-sharp-left':  `<path d="M${s/2} ${h*0.85} L${s/2} ${h*0.6} Q${s/2} ${h*0.35} ${s*0.18} ${h*0.3}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round"/>
+                         <polyline points="${s*0.26},${h*0.22} ${s*0.16},${h*0.3} ${s*0.24},${h*0.42}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>`,
+    'uturn':          `<path d="M${s*0.35} ${h*0.85} L${s*0.35} ${h*0.38} A${s*0.15} ${s*0.18} 0 0 1 ${s*0.65} ${h*0.38} L${s*0.65} ${h*0.65}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round"/>
+                       <polyline points="${s*0.55},${h*0.58} ${s*0.65},${h*0.68} ${s*0.75},${h*0.58}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>`,
+    'roundabout':     `<circle cx="${s/2}" cy="${h*0.48}" r="${s*0.2}" fill="none" stroke="${color}" stroke-width="5"/>
+                       <line x1="${s/2}" y1="${h*0.85}" x2="${s/2}" y2="${h*0.68}" stroke="${color}" stroke-width="5" stroke-linecap="round"/>
+                       <polyline points="${s/2-8},${h*0.3} ${s/2},${h*0.14} ${s/2+8},${h*0.3}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>`,
+    'arrive':         `<circle cx="${s/2}" cy="${h*0.4}" r="${s*0.2}" fill="${color}" opacity="0.25"/>
+                       <circle cx="${s/2}" cy="${h*0.4}" r="${s*0.1}" fill="${color}"/>
+                       <line x1="${s/2}" y1="${h*0.85}" x2="${s/2}" y2="${h*0.6}" stroke="${color}" stroke-width="5" stroke-linecap="round"/>`,
+    'merge':          `<line x1="${s*0.3}" y1="${h*0.85}" x2="${s/2}" y2="${h*0.45}" stroke="${color}" stroke-width="4" stroke-linecap="round"/>
+                       <line x1="${s*0.7}" y1="${h*0.85}" x2="${s/2}" y2="${h*0.45}" stroke="${color}" stroke-width="4" stroke-linecap="round"/>
+                       <line x1="${s/2}" y1="${h*0.45}" x2="${s/2}" y2="${h*0.15}" stroke="${color}" stroke-width="5" stroke-linecap="round"/>
+                       <polyline points="${s/2-8},${h*0.25} ${s/2},${h*0.1} ${s/2+8},${h*0.25}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>`,
+  };
+  const d = paths[type] || paths['straight'];
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${s} ${h}">${d}</svg>`;
+}
+
+// ── OSRM MODIFIER → MANEUVER TYPE ─────────────────
+function modifierToType(mod, type) {
+  if (!mod) return 'straight';
+  const m = mod.toLowerCase();
+  if (type === 'arrive') return 'arrive';
+  if (type === 'roundabout' || type === 'rotary') return 'roundabout';
+  if (m.includes('uturn') || m === 'u turn') return 'uturn';
+  if (m === 'sharp right') return 'turn-sharp-right';
+  if (m === 'sharp left')  return 'turn-sharp-left';
+  if (m === 'slight right') return 'turn-slight-right';
+  if (m === 'slight left')  return 'turn-slight-left';
+  if (m === 'right') return 'turn-right';
+  if (m === 'left')  return 'turn-left';
+  if (m === 'straight' || m === 'none') return 'straight';
+  return 'straight';
+}
+
+// ── MANEUVER COLOR ─────────────────────────────────
+function maneuverColor(type) {
+  if (type === 'arrive') return 'col-green';
+  if (type === 'uturn') return 'col-orange';
+  if (type.includes('sharp')) return 'col-orange';
+  return 'col-blue';
+}
+
+// ── FORMAT JARAK ──────────────────────────────────
+function fmtDist(meters) {
+  if (meters >= 1000) return {val: (meters/1000).toFixed(1), unit: 'km'};
+  if (meters >= 100)  return {val: Math.round(meters/10)*10, unit: 'm'};
+  return {val: Math.round(meters), unit: 'm'};
+}
+
+function fmtDistStr(meters) {
+  const d = fmtDist(meters); return d.val + ' ' + d.unit;
+}
+
+// ── FORMAT WAKTU ──────────────────────────────────
+function fmtEta(seconds) {
+  const t = new Date(Date.now() + seconds * 1000);
+  return t.getHours().toString().padStart(2,'0') + ':' + t.getMinutes().toString().padStart(2,'0');
+}
+function fmtDuration(seconds) {
+  const h = Math.floor(seconds/3600);
+  const m = Math.floor((seconds%3600)/60);
+  if (h > 0) return h + 'j ' + m + 'm';
+  return m + ' mnt';
+}
+
+// ── USER MARKER ───────────────────────────────────
+function createUserMarker(lat, lng, heading) {
+  const useHeading = heading !== null && heading !== undefined;
+  const icon = L.divIcon({
+    className: '',
+    html: useHeading
+      ? `<div class="user-heading" style="transform:rotate(${heading}deg)"></div>`
+      : `<div class="user-dot"></div>`,
+    iconSize: useHeading ? [14, 16] : [20, 20],
+    iconAnchor: useHeading ? [7, 16] : [10, 10],
+  });
+  if (userMarker) {
+    userMarker.setLatLng([lat, lng]);
+    userMarker.setIcon(icon);
+  } else {
+    userMarker = L.marker([lat, lng], {icon, zIndexOffset: 1000}).addTo(map);
+  }
+}
+
+// ── DEST MARKER ───────────────────────────────────
+function createDestMarker(lat, lng) {
+  if (destMarker) map.removeLayer(destMarker);
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="width:18px;height:18px;background:var(--red);border:3px solid #fff;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.5)"></div>`,
+    iconSize: [18, 18], iconAnchor: [9, 9]
+  });
+  destMarker = L.marker([lat, lng], {icon}).addTo(map);
+}
+
+// ── DRAW ROUTE ────────────────────────────────────
+// mode: 'osrm' = coords berformat [lng,lat], 'kml' = coords berformat [lat,lng]
+function drawRoute(coords, passedIdx, mode='osrm') {
+  if (routeLayer) map.removeLayer(routeLayer);
+  if (passedLayer) map.removeLayer(passedLayer);
+
+  const all = mode === 'kml' ? coords : coords.map(c => [c[1], c[0]]);
+  const color = mode === 'kml' ? (kmlTrackColor || '#2ecc8a') : '#4c8cf8';
+
+  routeLayer = L.polyline(all, {
+    color, weight: 7, opacity: 0.9,
+    lineCap: 'round', lineJoin: 'round'
+  }).addTo(map);
+
+  if (passedIdx > 0) {
+    const passed = all.slice(0, passedIdx + 1);
+    passedLayer = L.polyline(passed, {
+      color: '#405050', weight: 7, opacity: 0.5,
+      lineCap: 'round', lineJoin: 'round'
+    }).addTo(map);
+  }
+}
+
+// ── GPS TRACKING ──────────────────────────────────
+function startGPS() {
+  if (!navigator.geolocation) {
+    alert('GPS tidak didukung browser ini');
+    return;
+  }
+  watchId = navigator.geolocation.watchPosition(
+    onGpsUpdate,
+    err => console.warn('GPS error:', err),
+    {enableHighAccuracy: true, maximumAge: 1000, timeout: 10000}
+  );
+}
+
+function onGpsUpdate(pos) {
+  const lat = pos.coords.latitude;
+  const lng = pos.coords.longitude;
+  const spd = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 0;
+  const hdg = pos.coords.heading;
+
+  userPos = {lat, lng, speed: spd, heading: hdg};
+
+  createUserMarker(lat, lng, hdg);
+
+  // Sembunyikan loading
+  document.getElementById('loadingOverlay').style.opacity = '0';
+  setTimeout(() => document.getElementById('loadingOverlay').style.display = 'none', 400);
+
+  // Pusatkan peta jika auto center aktif
+  if (autoCenter) {
+    if (navActive) {
+      map.setView([lat, lng], Math.max(map.getZoom(), 17), {animate: true});
+    } else {
+      map.setView([lat, lng], map.getZoom(), {animate: true});
+    }
+  }
+
+  // Update navigasi
+  if (navActive) updateNavigation();
+
+  // Update kecepatan
+  document.getElementById('statSpeed').textContent = spd;
+}
+
+// ── NOMINATIM SEARCH ──────────────────────────────
+async function searchPlace(query) {
+  if (query.length < 3) { hideResults(); return; }
+  const center = userPos ? `&lat=${userPos.lat}&lon=${userPos.lng}&bounded=0` : '';
+  try {
+    const r = await fetch(
+      `${NOMINATIM}/search?q=${encodeURIComponent(query)}&format=json&limit=6&addressdetails=1${center}`,
+      {headers: {'Accept-Language': 'id,en'}}
+    );
+    const data = await r.json();
+    showResults(data);
+  } catch(e) {
+    console.error('Search error', e);
+  }
+}
+
+function showResults(data) {
+  const el = document.getElementById('searchResults');
+  if (!data.length) { el.style.display = 'none'; return; }
+  el.innerHTML = data.map(p => {
+    const name = p.namedetails?.name || p.display_name.split(',')[0];
+    const addr = p.display_name.split(',').slice(1,3).join(',').trim();
+    return `<div class="sr-item" data-lat="${p.lat}" data-lon="${p.lon}" data-name="${name}">
+      <div class="sr-icon">
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+      </div>
+      <div class="sr-text">
+        <div class="sr-name">${name}</div>
+        <div class="sr-addr">${addr}</div>
+      </div>
+    </div>`;
+  }).join('');
+  el.style.display = 'block';
+
+  el.querySelectorAll('.sr-item').forEach(item => {
+    item.addEventListener('click', () => {
+      selectDestination(
+        parseFloat(item.dataset.lat),
+        parseFloat(item.dataset.lon),
+        item.dataset.name
+      );
+    });
+  });
+}
+
+function hideResults() {
+  document.getElementById('searchResults').style.display = 'none';
+}
+
+// ── SELECT DESTINATION (OSRM mode) ────────────────
+async function selectDestination(lat, lng, name) {
+  // Jika dipanggil dari KML track, sudah ditangani oleh selectKmlTrack
+  kmlTrackMode = false;
+  destPos = {lat, lng, name: name || `${lat.toFixed(4)}, ${lng.toFixed(4)}`};
+  document.getElementById('searchInput').value = name || '';
+  document.getElementById('searchClear').style.display = 'block';
+  hideResults();
+
+  createDestMarker(lat, lng);
+
+  // Fetch route via OSRM
+  await fetchRoute();
+  showStateDest();
+
+  document.getElementById('destName').textContent = destPos.name;
+  if (route) {
+    const dist = fmtDistStr(route.distance);
+    const dur  = fmtDuration(route.duration);
+    document.getElementById('destMeta').textContent = `${dist} · ${dur}`;
+  }
+
+  if (routeLayer) map.fitBounds(routeLayer.getBounds().pad(0.2));
+}
+
+// ── SELECT KML TRACK (track mode — tanpa OSRM) ────
+function selectKmlTrack(trackIdx) {
+  const t = kmlData.tracks[trackIdx];
+  if (!t || t.coords.length < 2) return;
+
+  kmlTrackMode   = true;
+  kmlTrackCoords = t.coords; // sudah [lat, lng]
+  kmlTrackIdx    = 0;
+  kmlTrackName   = t.name;
+  kmlTrackColor  = t._leafletColor || t.color || TRACK_COLORS[trackIdx % TRACK_COLORS.length];
+
+  // Set dest ke titik akhir track
+  const last = kmlTrackCoords[kmlTrackCoords.length - 1];
+  destPos = { lat: last[0], lng: last[1], name: 'Akhir: ' + t.name };
+
+  route = null;
+  steps = [];
+  stepIdx = 0;
+
+  // Gambar track langsung (mode kml, coords [lat,lng])
+  drawRoute(kmlTrackCoords, -1, 'kml');
+
+  // Marker tujuan di akhir track
+  createDestMarker(last[0], last[1]);
+
+  // Hitung panjang total track
+  const totalDist = calcTrackLength(kmlTrackCoords);
+
+  document.getElementById('searchInput').value = t.name;
+  document.getElementById('searchClear').style.display = 'block';
+  hideResults();
+  showStateDest();
+
+  document.getElementById('destName').textContent = '🛣️ ' + t.name;
+  document.getElementById('destMeta').textContent =
+    `${fmtDistStr(totalDist)} · ${t.coords.length} titik track`;
+
+  map.fitBounds(L.latLngBounds(kmlTrackCoords).pad(0.1));
+}
+
+// ── FETCH ROUTE (OSRM) — hanya dipakai saat bukan KML track mode ──
+async function fetchRoute(silent = false) {
+  if (kmlTrackMode) return true; // skip OSRM
+  if (!userPos || !destPos) return false;
+  const url = `${OSRM_BASE}/${userPos.lng},${userPos.lat};${destPos.lng},${destPos.lat}` +
+    `?overview=full&geometries=geojson&steps=true&annotations=false`;
+  try {
+    const r = await fetch(url);
+    const data = await r.json();
+    if (data.code !== 'Ok' || !data.routes.length) {
+      if (!silent) alert('Rute tidak ditemukan');
+      return false;
+    }
+    route = data.routes[0];
+    steps = extractSteps(route);
+    stepIdx = 0;
+    drawRoute(route.geometry.coordinates, -1);
+    return true;
+  } catch(e) {
+    console.error('OSRM error', e);
+    return false;
+  }
+}
+
+// ── EXTRACT STEPS ─────────────────────────────────
+function extractSteps(routeObj) {
+  const out = [];
+  for (const leg of routeObj.legs) {
+    for (const step of leg.steps) {
+      const m = step.maneuver;
+      const type = modifierToType(m.modifier, m.type);
+      out.push({
+        type,
+        instruction: buildInstruction(m.type, m.modifier, step.name),
+        name: step.name || '',
+        distance: step.distance,
+        duration: step.duration,
+        location: m.location, // [lng, lat]
+        bearing: m.bearing_after || 0,
+      });
+    }
+  }
+  return out;
+}
+
+function buildInstruction(type, modifier, name) {
+  const street = name ? `ke ${name}` : '';
+  if (type === 'arrive') return `Tiba di tujuan${name ? ' di '+name : ''}`;
+  if (type === 'depart') return `Mulai ${street}`;
+  if (type === 'roundabout' || type === 'rotary') return `Masuk bundaran${name ? ', ambil '+name : ''}`;
+  if (!modifier) return `Lanjut ${street}`;
+  const mod = {
+    'straight': 'Lurus', 'right': 'Belok kanan', 'left': 'Belok kiri',
+    'slight right': 'Agak kanan', 'slight left': 'Agak kiri',
+    'sharp right': 'Belok tajam kanan', 'sharp left': 'Belok tajam kiri',
+    'uturn': 'Balik arah'
+  }[modifier.toLowerCase()] || modifier;
+  return `${mod}${street ? ' '+street : ''}`;
+}
+
+// ── START NAVIGATION ──────────────────────────────
+function startNavigation() {
+  if (kmlTrackMode) {
+    // Mode track KML — tidak butuh route OSRM
+    if (!kmlTrackCoords.length) return;
+    navActive = true;
+    kmlTrackIdx = findNearestTrackPoint(); // mulai dari titik terdekat
+    autoCenter = true;
+    showStateNav();
+    document.getElementById('btnSteps').style.display = 'flex';
+    document.getElementById('map').className = 'nav-active';
+    // Sembunyikan tombol reroute saat KML mode
+    document.getElementById('btnReroute').style.display = 'none';
+    startNavTimer();
+    updateNavigationKML();
+  } else {
+    // Mode OSRM normal
+    if (!route || !steps.length) return;
+    navActive = true;
+    stepIdx = 0;
+    autoCenter = true;
+    showStateNav();
+    document.getElementById('btnSteps').style.display = 'flex';
+    document.getElementById('map').className = 'nav-active';
+    document.getElementById('btnReroute').style.display = '';
+    startNavTimer();
+    updateNavigation();
+  }
+}
+
+function stopNavigation() {
+  navActive = false;
+  kmlTrackMode = false;
+  clearInterval(navTimer);
+  document.getElementById('btnSteps').style.display = 'none';
+  document.getElementById('btnReroute').style.display = '';
+  document.getElementById('map').className = '';
+  showStateIdle();
+  publishStop();
+  if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+  if (passedLayer) { map.removeLayer(passedLayer); passedLayer = null; }
+}
+
+function startNavTimer() {
+  clearInterval(navTimer);
+  navTimer = setInterval(() => {
+    if (!navActive) return;
+    if (kmlTrackMode) updateNavigationKML();
+    else updateNavigation();
+  }, UPDATE_INTERVAL);
+}
+
+// ── KML TRACK NAVIGATION ──────────────────────────
+// Tidak ada routing — hanya ikuti urutan titik track secara berurutan.
+// Tidak ada rerouting. Jika melenceng, tetap tunjukkan titik track berikutnya.
+
+function findNearestTrackPoint() {
+  // Mulai dari titik track yang paling dekat dengan posisi user
+  if (!userPos || !kmlTrackCoords.length) return 0;
+  let best = 0, bestDist = Infinity;
+  for (let i = 0; i < kmlTrackCoords.length; i++) {
+    const d = distToPoint(userPos.lat, userPos.lng, kmlTrackCoords[i][0], kmlTrackCoords[i][1]);
+    if (d < bestDist) { bestDist = d; best = i; }
+  }
+  return best;
+}
+
+function updateNavigationKML() {
+  if (!userPos || !kmlTrackCoords.length) return;
+
+  // Maju ke titik track berikutnya jika sudah dekat
+  const ADVANCE_DIST = 10; // meter — maju titik jika dalam radius ini
+  while (
+    kmlTrackIdx < kmlTrackCoords.length - 1 &&
+    distToPoint(userPos.lat, userPos.lng,
+      kmlTrackCoords[kmlTrackIdx][0], kmlTrackCoords[kmlTrackIdx][1]) < ADVANCE_DIST
+  ) {
+    kmlTrackIdx++;
+  }
+
+  const target = kmlTrackCoords[kmlTrackIdx];
+  const isLast = kmlTrackIdx === kmlTrackCoords.length - 1;
+
+  // Jarak ke titik target berikutnya
+  const distToTarget = distToPoint(userPos.lat, userPos.lng, target[0], target[1]);
+
+  // Bearing/arah ke target → tentukan maneuver sederhana
+  const bearing = calcBearing(userPos.lat, userPos.lng, target[0], target[1]);
+  const heading = userPos.heading || 0;
+  const maneuverType = isLast ? 'arrive' : bearingToManeuver(bearing, heading);
+
+  // Jarak sisa ke akhir track
+  const remain = kmlTrackRemainingDist();
+  const remainSec = remain / Math.max((userPos.speed || 0) / 3.6, 8.33);
+
+  // Format
+  const d = fmtDist(distToTarget);
+
+  // Update UI
+  document.getElementById('mArrow').innerHTML = arrowSvg(maneuverType, 60);
+  const distEl = document.getElementById('mDist');
+  distEl.innerHTML = `${d.val}<small class="m-dist-unit">${d.unit}</small>`;
+  document.getElementById('mStreet').textContent =
+    isLast ? `Tiba di ${kmlTrackName}` :
+    `Ikut track · titik ${kmlTrackIdx + 1}/${kmlTrackCoords.length}`;
+
+  const banner = document.getElementById('maneuverBanner');
+  banner.className = 'maneuver-banner ' + (isLast ? 'col-green' : 'col-blue');
+
+  // Next preview — titik +5 ke depan
+  const nextPreview = document.getElementById('nextPreview');
+  const nextIdx = Math.min(kmlTrackIdx + 5, kmlTrackCoords.length - 1);
+  if (!isLast && nextIdx !== kmlTrackIdx) {
+    const nextTarget = kmlTrackCoords[nextIdx];
+    const nextBearing = calcBearing(target[0], target[1], nextTarget[0], nextTarget[1]);
+    const nextMnvr = bearingToManeuver(nextBearing, bearing);
+    const nextDist = distToPoint(target[0], target[1], nextTarget[0], nextTarget[1]);
+    nextPreview.style.display = 'flex';
+    document.getElementById('nextArrowSvg').innerHTML = arrowSvg(nextMnvr, 22);
+    document.getElementById('nextDistText').textContent = fmtDistStr(nextDist);
+  } else {
+    nextPreview.style.display = 'none';
+  }
+
+  // Stats
+  document.getElementById('statEta').textContent = fmtEta(remainSec);
+  document.getElementById('statRemain').textContent = fmtDistStr(remain);
+
+  // Update garis yang sudah dilalui
+  drawRoute(kmlTrackCoords, kmlTrackIdx, 'kml');
+
+  // Titik track dalam radius 100m — encode sebagai offset meter [dy, dx] dari posisi user
+  // Format kompak: mengurangi ukuran payload JSON
+  const RADIUS_M = 100;
+  const cosLat   = Math.cos(userPos.lat * Math.PI / 180);
+  const mPerDegLat = 111320;
+  const mPerDegLng = 111320 * cosLat;
+
+  const nearbyPts  = []; // [[dy_m, dx_m], ...] offset meter dari user, rounded integer
+  let   userPtIdxInNearby = -1;
+
+  for (let i = 0; i < kmlTrackCoords.length; i++) {
+    const dy = (kmlTrackCoords[i][0] - userPos.lat) * mPerDegLat; // positif = utara
+    const dx = (kmlTrackCoords[i][1] - userPos.lng) * mPerDegLng; // positif = timur
+    const dist2d = Math.sqrt(dx * dx + dy * dy);
+    if (dist2d <= RADIUS_M) {
+      const ptEntry = [Math.round(dy), Math.round(dx), i <= kmlTrackIdx ? 1 : 0];
+      nearbyPts.push(ptEntry);
+      if (i === kmlTrackIdx) userPtIdxInNearby = nearbyPts.length - 1;
+    }
+  }
+  // Jika titik user tidak masuk (harusnya selalu masuk), tambahkan origin
+  if (userPtIdxInNearby < 0) {
+    nearbyPts.unshift([0, 0, 1]);
+    userPtIdxInNearby = 0;
+  }
+
+  // Target (titik track berikutnya) — offset meter
+  const tDy = Math.round((target[0] - userPos.lat) * mPerDegLat);
+  const tDx = Math.round((target[1] - userPos.lng) * mPerDegLng);
+
+  // Publish MQTT
+  const nextT = kmlTrackCoords[Math.min(kmlTrackIdx + 1, kmlTrackCoords.length - 1)];
+  publishNav({
+    active: 1,
+    maneuver: maneuverType,
+    distance: distToTarget,
+    distUnit: d.unit,
+    street: kmlTrackName,
+    eta: fmtEta(remainSec),
+    remain: remain >= 1000 ? remain/1000 : remain,
+    remainUnit: remain >= 1000 ? 'km' : 'm',
+    speed: userPos.speed || 0,
+    heading: heading,
+    lat: userPos.lat,
+    lng: userPos.lng,
+    nextManeuver: isLast ? 'arrive' : bearingToManeuver(
+      calcBearing(target[0], target[1], nextT[0], nextT[1]), bearing),
+    nextStreet: kmlTrackName,
+    nextDist: isLast ? 0 : distToPoint(target[0], target[1], nextT[0], nextT[1]),
+    // Map data — offset meter dari posisi user
+    pts: nearbyPts,         // [[dy,dx,passed], ...] max ~60 titik dalam 100m
+    pi:  userPtIdxInNearby, // indeks user di dalam pts
+    hdg: Math.round(heading),
+    td:  [tDy, tDx],        // target point offset meter
+  });
+
+  // Tiba
+  if (isLast && distToTarget < 25) {
+    onArrived();
+  }
+}
+
+function kmlTrackRemainingDist() {
+  // Jumlah jarak dari titik saat ini ke akhir track
+  let d = 0;
+  for (let i = kmlTrackIdx; i < kmlTrackCoords.length - 1; i++) {
+    d += distToPoint(
+      kmlTrackCoords[i][0], kmlTrackCoords[i][1],
+      kmlTrackCoords[i+1][0], kmlTrackCoords[i+1][1]
+    );
+  }
+  // Kurangi jarak yang sudah dilalui dari titik kmlTrackIdx ke user
+  const toUser = distToPoint(userPos.lat, userPos.lng,
+    kmlTrackCoords[kmlTrackIdx][0], kmlTrackCoords[kmlTrackIdx][1]);
+  return Math.max(0, d - toUser);
+}
+
+function calcBearing(lat1, lng1, lat2, lng2) {
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const y = Math.sin(dLng) * Math.cos(lat2 * Math.PI / 180);
+  const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
+            Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos(dLng);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+function bearingToManeuver(targetBearing, currentHeading) {
+  // Hitung perbedaan sudut antara heading sekarang dan arah ke titik target
+  let diff = ((targetBearing - currentHeading) + 360) % 360;
+  if (diff > 180) diff -= 360; // -180 s/d +180
+  if (Math.abs(diff) < 20)  return 'straight';
+  if (diff >= 20  && diff < 45)  return 'turn-slight-right';
+  if (diff >= 45  && diff < 120) return 'turn-right';
+  if (diff >= 120)               return 'turn-sharp-right';
+  if (diff <= -20  && diff > -45)  return 'turn-slight-left';
+  if (diff <= -45  && diff > -120) return 'turn-left';
+  if (diff <= -120)                return 'turn-sharp-left';
+  return 'straight';
+}
+
+// Step list untuk KML track
+function buildStepListKML() {
+  const el = document.getElementById('stepList');
+  // Buat daftar per-segmen tiap ~50m
+  const segments = [];
+  let segDist = 0;
+  let segStart = 0;
+  for (let i = 1; i < kmlTrackCoords.length; i++) {
+    segDist += distToPoint(
+      kmlTrackCoords[i-1][0], kmlTrackCoords[i-1][1],
+      kmlTrackCoords[i][0], kmlTrackCoords[i][1]
+    );
+    if (segDist >= 50 || i === kmlTrackCoords.length - 1) {
+      const bearing = calcBearing(
+        kmlTrackCoords[segStart][0], kmlTrackCoords[segStart][1],
+        kmlTrackCoords[i][0], kmlTrackCoords[i][1]
+      );
+      const type = i === kmlTrackCoords.length - 1 ? 'arrive' :
+        bearingToManeuver(bearing, segStart > 0 ?
+          calcBearing(kmlTrackCoords[segStart-1][0], kmlTrackCoords[segStart-1][1],
+                      kmlTrackCoords[segStart][0], kmlTrackCoords[segStart][1]) : bearing);
+      segments.push({ type, dist: segDist, ptIdx: i });
+      segDist = 0;
+      segStart = i;
+    }
+  }
+
+  el.innerHTML = `
+    <div class="kml-section-title" style="padding:10px 16px 6px">
+      🛣️ ${kmlTrackName} — ${kmlTrackCoords.length} titik
+    </div>
+    ` + segments.map((seg, i) => `
+    <div class="step-item ${seg.ptIdx <= kmlTrackIdx ? 'current' : ''}">
+      <div class="step-icon">${arrowSvg(seg.type, 20, seg.ptIdx <= kmlTrackIdx ? '#2ecc8a' : '#8888aa')}</div>
+      <div class="step-text">
+        <div class="step-instr">${seg.type === 'arrive' ? 'Tiba di tujuan' : 'Ikut track'}</div>
+        <div class="step-dist">${fmtDistStr(seg.dist)} · titik ${seg.ptIdx}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── CORE NAVIGATION UPDATE ─────────────────────────
+function updateNavigation() {
+  if (!userPos || !steps.length || !route) return;
+
+  // Cari step yang paling relevan
+  stepIdx = findCurrentStep();
+  const step = steps[stepIdx];
+  if (!step) return;
+
+  // Hitung jarak ke titik maneuver step ini
+  const dist = distToPoint(userPos.lat, userPos.lng, step.location[1], step.location[0]);
+
+  // Cek rerouting (melenceng jauh dari rute)
+  const offRoute = distToRoute(userPos.lat, userPos.lng);
+  if (offRoute > REROUTE_DIST) {
+    reroute();
+    return;
+  }
+
+  // Hitung jarak & ETA sisa ke tujuan
+  const remain = remainingDistance();
+  const remainSec = remainingDuration();
+
+  // Format jarak ke belokan berikut
+  const d = fmtDist(dist);
+
+  // Update UI
+  document.getElementById('mArrow').innerHTML = arrowSvg(step.type, 60);
+  const distEl = document.getElementById('mDist');
+  distEl.innerHTML = `${d.val}<small class="m-dist-unit">${d.unit}</small>`;
+  document.getElementById('mStreet').textContent = step.instruction;
+
+  // Warna banner
+  const banner = document.getElementById('maneuverBanner');
+  banner.className = 'maneuver-banner ' + maneuverColor(step.type);
+
+  // Next step preview
+  const nextStep = steps[stepIdx + 1];
+  const nextPreview = document.getElementById('nextPreview');
+  if (nextStep && dist < 300) {
+    nextPreview.style.display = 'flex';
+    document.getElementById('nextArrowSvg').innerHTML = arrowSvg(nextStep.type, 22);
+    document.getElementById('nextDistText').textContent = nextStep.name || nextStep.instruction.split(' ')[0];
+  } else {
+    nextPreview.style.display = 'none';
+  }
+
+  // Stats
+  document.getElementById('statEta').textContent = fmtEta(remainSec);
+  document.getElementById('statRemain').textContent = fmtDistStr(remain);
+
+  // Update rute passed
+  const passedIdx = findPassedCoordIdx();
+  if (passedIdx > 0) drawRoute(route.geometry.coordinates, passedIdx, 'osrm');
+
+  // Publish ke MQTT
+  publishNav({
+    active: 1,
+    maneuver: step.type,
+    distance: dist,
+    distUnit: d.unit,
+    street: step.name || step.instruction,
+    eta: fmtEta(remainSec),
+    remain: remain >= 1000 ? remain/1000 : remain,
+    remainUnit: remain >= 1000 ? 'km' : 'm',
+    speed: userPos.speed || 0,
+    heading: userPos.heading || 0,
+    lat: userPos.lat,
+    lng: userPos.lng,
+    nextManeuver: nextStep ? nextStep.type : 'straight',
+    nextStreet: nextStep ? nextStep.name : '',
+    nextDist: nextStep ? nextStep.distance : 0,
+  });
+
+  // Tiba di tujuan
+  const totalDist = distToPoint(userPos.lat, userPos.lng, destPos.lat, destPos.lng);
+  if (totalDist < 20 || step.type === 'arrive') {
+    onArrived();
+  }
+}
+
+// ── FIND CURRENT STEP ─────────────────────────────
+function findCurrentStep() {
+  if (!userPos || !steps.length) return 0;
+  let best = stepIdx;
+  let bestDist = Infinity;
+
+  for (let i = Math.max(0, stepIdx - 1); i < Math.min(steps.length, stepIdx + 4); i++) {
+    const d = distToPoint(userPos.lat, userPos.lng, steps[i].location[1], steps[i].location[0]);
+    if (d < bestDist) { bestDist = d; best = i; }
+  }
+
+  // Maju step jika sudah sangat dekat dengan maneuver
+  if (bestDist < 15 && best < steps.length - 1) best++;
+
+  return best;
+}
+
+// ── DISTANCE TO ROUTE ─────────────────────────────
+function distToRoute(lat, lng) {
+  if (!route) return 0;
+  const coords = route.geometry.coordinates;
+  let minDist = Infinity;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const d = distToSegment(lat, lng,
+      coords[i][1], coords[i][0],
+      coords[i+1][1], coords[i+1][0]);
+    if (d < minDist) minDist = d;
+  }
+  return minDist;
+}
+
+function distToSegment(plat, plng, alat, alng, blat, blng) {
+  const dx = blat - alat, dy = blng - alng;
+  const len2 = dx*dx + dy*dy;
+  if (len2 === 0) return distToPoint(plat, plng, alat, alng);
+  let t = ((plat-alat)*dx + (plng-alng)*dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return distToPoint(plat, plng, alat + t*dx, alng + t*dy);
+}
+
+// ── FIND PASSED COORD INDEX ───────────────────────
+function findPassedCoordIdx() {
+  if (!route || !userPos) return -1;
+  const coords = route.geometry.coordinates;
+  let best = 0, bestDist = Infinity;
+  for (let i = 0; i < coords.length; i++) {
+    const d = distToPoint(userPos.lat, userPos.lng, coords[i][1], coords[i][0]);
+    if (d < bestDist) { bestDist = d; best = i; }
+  }
+  return best;
+}
+
+// ── REMAINING DISTANCE / DURATION ─────────────────
+function remainingDistance() {
+  if (!steps.length || stepIdx >= steps.length) return 0;
+  let total = 0;
+  for (let i = stepIdx; i < steps.length; i++) total += steps[i].distance;
+  // Kurangi jarak yang sudah dilalui di step ini
+  const step = steps[stepIdx];
+  const distToManeuver = distToPoint(userPos.lat, userPos.lng, step.location[1], step.location[0]);
+  return total - (step.distance - distToManeuver);
+}
+
+function remainingDuration() {
+  if (!steps.length || stepIdx >= steps.length) return 0;
+  let total = 0;
+  const speed = (userPos?.speed || 0) > 5 ? userPos.speed / 3.6 : 8.33;
+  return remainingDistance() / speed;
+}
+
+// ── HAVERSINE DISTANCE ────────────────────────────
+function distToPoint(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 +
+    Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// ── REROUTE — hanya saat OSRM mode ───────────────
+let rerouteTimeout = null;
+function reroute() {
+  if (kmlTrackMode) return; // tidak reroute saat ikut track KML
+  if (rerouteTimeout) return;
+  document.getElementById('rerouteToast').style.display = 'block';
+  rerouteTimeout = setTimeout(async () => {
+    const ok = await fetchRoute(true);
+    if (ok) { stepIdx = 0; updateNavigation(); }
+    document.getElementById('rerouteToast').style.display = 'none';
+    rerouteTimeout = null;
+  }, 2000);
+}
+
+// ── ARRIVED ───────────────────────────────────────
+function onArrived() {
+  clearInterval(navTimer);
+  publishStop();
+  setTimeout(() => {
+    alert('🎉 Anda telah tiba di tujuan!');
+    stopNavigation();
+  }, 500);
+}
+
+// ── STEP DRAWER ───────────────────────────────────
+function buildStepList() {
+  if (kmlTrackMode) { buildStepListKML(); return; }
+  const el = document.getElementById('stepList');
+  el.innerHTML = steps.map((step, i) => `
+    <div class="step-item ${i === stepIdx ? 'current' : ''}">
+      <div class="step-icon">${arrowSvg(step.type, 20, i === stepIdx ? '#4c8cf8' : '#8888aa')}</div>
+      <div class="step-text">
+        <div class="step-instr">${step.instruction}</div>
+        <div class="step-dist">${fmtDistStr(step.distance)}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── STATE SWITCHERS ───────────────────────────────
+function showStateIdle() {
+  document.getElementById('stateIdle').style.display = 'flex';
+  document.getElementById('stateDest').style.display = 'none';
+  document.getElementById('stateNav').style.display = 'none';
+  document.getElementById('map').className = '';
+}
+function showStateDest() {
+  document.getElementById('stateIdle').style.display = 'none';
+  document.getElementById('stateDest').style.display = 'block';
+  document.getElementById('stateNav').style.display = 'none';
+  document.getElementById('map').className = 'dest-active';
+}
+function showStateNav() {
+  document.getElementById('stateIdle').style.display = 'none';
+  document.getElementById('stateDest').style.display = 'none';
+  document.getElementById('stateNav').style.display = 'block';
+  document.getElementById('map').className = 'nav-active';
+}
+
+// ── MQTT ──────────────────────────────────────────
+function connectMqtt() {
+  if (mqttClient) { mqttClient.end(); mqttClient = null; }
+  const broker = document.getElementById('mqttBroker').value.trim();
+  const [host, port] = broker.includes(':') ? broker.split(':') : [broker, '8084'];
+  try {
+    mqttClient = mqtt.connect(`wss://${host}:${port}/mqtt`, {
+      clientId: 'navosrm_' + Math.random().toString(36).substr(2, 6),
+      reconnectPeriod: 5000,
+      connectTimeout: 10000,
+    });
+    mqttClient.on('connect', () => {
+      mqttOk = true;
+      document.getElementById('dotMqtt').className = 'status-dot ok';
+    });
+    mqttClient.on('close', () => {
+      mqttOk = false;
+      document.getElementById('dotMqtt').className = 'status-dot fail';
+    });
+    mqttClient.on('error', () => {
+      mqttOk = false;
+      document.getElementById('dotMqtt').className = 'status-dot fail';
+    });
+  } catch(e) {
+    console.error('MQTT init error', e);
+  }
+}
+
+function publishNav(data) {
+  if (!mqttClient || !mqttOk) return;
+  const ch = document.getElementById('mqttChannel').value.trim() || 'NAVKU001';
+  const topic = `navmqtt/${ch}/data`;
+  const payload = JSON.stringify({
+    a: data.active, m: data.maneuver,
+    d: Math.round(data.distance), u: data.distUnit,
+    s: data.street.substring(0, 40),
+    e: data.eta, r: parseFloat(data.remain.toFixed(1)),
+    ru: data.remainUnit, sp: data.speed,
+    h: Math.round(data.heading || 0),
+    la: data.lat.toFixed(6), ln: data.lng.toFixed(6),
+    nm: data.nextManeuver, ns: data.nextStreet,
+    nd: Math.round(data.nextDist || 0),
+    // Map data (hanya saat KML track mode)
+    ...(data.pts ? {
+      pts: data.pts,   // [[dy_m, dx_m, passed], ...]
+      pi:  data.pi,    // indeks user di pts
+      hdg: data.hdg,   // heading integer
+      td:  data.td,    // [dy_m, dx_m] target berikutnya
+    } : {}),
+    ch
+  });
+  mqttClient.publish(topic, payload, {qos: 0});
+  txCount++;
+}
+
+function publishStop() {
+  if (!mqttClient || !mqttOk) return;
+  const ch = document.getElementById('mqttChannel').value.trim() || 'NAVKU001';
+  mqttClient.publish(`navmqtt/${ch}/data`, JSON.stringify({a:0,m:'straight',d:0,u:'m',s:'',e:'--:--',r:0,ru:'km',sp:0,h:0,la:'0',ln:'0',nm:'straight',ns:'',nd:0,ch}), {qos:0});
+}
+
+// ── MAP TAP → SET DESTINATION ─────────────────────
+map.on('click', async e => {
+  if (navActive) return;
+  const {lat, lng} = e.latlng;
+
+  // Reverse geocode
+  let name = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  try {
+    const r = await fetch(`${NOMINATIM}/reverse?lat=${lat}&lon=${lng}&format=json`);
+    const d = await r.json();
+    if (d.display_name) name = d.display_name.split(',').slice(0,2).join(',').trim();
+  } catch(e) {}
+
+  selectDestination(lat, lng, name);
+});
+
+// Matikan auto-center saat user drag
+map.on('dragstart', () => { autoCenter = false; });
+
+// ── UI EVENTS ─────────────────────────────────────
+document.getElementById('searchInput').addEventListener('input', e => {
+  const v = e.target.value.trim();
+  document.getElementById('searchClear').style.display = v ? 'block' : 'none';
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(() => searchPlace(v), 300);
+});
+
+document.getElementById('searchClear').addEventListener('click', () => {
+  document.getElementById('searchInput').value = '';
+  document.getElementById('searchClear').style.display = 'none';
+  hideResults();
+});
+
+document.getElementById('btnLocate').addEventListener('click', () => {
+  autoCenter = true;
+  if (userPos) map.setView([userPos.lat, userPos.lng], 17, {animate: true});
+});
+
+document.getElementById('btnMqttConnect').addEventListener('click', connectMqtt);
+
+document.getElementById('btnStartNav').addEventListener('click', startNavigation);
+
+document.getElementById('btnCancelDest').addEventListener('click', () => {
+  destPos = null;
+  if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
+  if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+  document.getElementById('searchInput').value = '';
+  document.getElementById('searchClear').style.display = 'none';
+  showStateIdle();
+});
+
+document.getElementById('btnStopNav').addEventListener('click', stopNavigation);
+
+document.getElementById('btnReroute').addEventListener('click', async () => {
+  document.getElementById('rerouteToast').style.display = 'block';
+  const ok = await fetchRoute(true);
+  if (ok) { stepIdx = 0; updateNavigation(); }
+  setTimeout(() => document.getElementById('rerouteToast').style.display = 'none', 1500);
+});
+
+document.getElementById('btnSteps').addEventListener('click', () => {
+  buildStepList();
+  document.getElementById('stepDrawer').style.display = 'flex';
+});
+
+document.getElementById('stepDrawer').addEventListener('click', e => {
+  if (e.target === document.getElementById('stepDrawer')) {
+    document.getElementById('stepDrawer').style.display = 'none';
+  }
+});
+
+// ── KML / KMZ PARSER ─────────────────────────────
+
+// Warna track untuk KML
+const TRACK_COLORS = ['#4c8cf8','#2ecc8a','#f5a623','#f55252','#a855f7','#ec4899','#14b8a6'];
+
+async function handleKmlFile(file) {
+  let kmlText = '';
+  const name = file.name;
+
+  try {
+    if (name.toLowerCase().endsWith('.kmz')) {
+      // KMZ = ZIP berisi doc.kml
+      const zip = await JSZip.loadAsync(file);
+      // Cari file .kml di dalam zip
+      let kmlFile = null;
+      zip.forEach((path, f) => {
+        if (path.toLowerCase().endsWith('.kml') && !kmlFile) kmlFile = f;
+      });
+      if (!kmlFile) { alert('File KMZ tidak berisi .kml'); return; }
+      kmlText = await kmlFile.async('text');
+    } else {
+      // KML biasa
+      kmlText = await file.text();
+    }
+
+    const parsed = parseKML(kmlText, name);
+    if (!parsed) { alert('Format KML tidak valid'); return; }
+
+    kmlData = parsed;
+    renderKmlOnMap();
+    showKmlDrawerLoaded(name);
+  } catch(e) {
+    console.error('KML parse error:', e);
+    alert('Gagal membaca file: ' + e.message);
+  }
+}
+
+function parseKML(text, filename) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text, 'text/xml');
+  if (doc.querySelector('parsererror')) return null;
+
+  const waypoints = [];
+  const tracks    = [];
+  const polygons  = [];
+  const docName   = doc.querySelector('Document > name')?.textContent?.trim()
+                  || filename.replace(/\.[^.]+$/, '');
+  const docDesc   = doc.querySelector('Document > description')?.textContent?.trim() || '';
+
+  // ── Placemarks ────────────────────────────────
+  doc.querySelectorAll('Placemark').forEach(pm => {
+    const pmName = pm.querySelector('name')?.textContent?.trim() || 'Tanpa Nama';
+    const pmDesc = pm.querySelector('description')?.textContent?.trim() || '';
+    const pmStyle = getPlacemarkStyle(pm, doc);
+
+    // Point
+    const pt = pm.querySelector('Point > coordinates');
+    if (pt) {
+      const [lng, lat, alt] = pt.textContent.trim().split(',').map(Number);
+      if (!isNaN(lat) && !isNaN(lng)) {
+        waypoints.push({ name: pmName, desc: pmDesc, lat, lng, alt: alt||0, color: pmStyle.iconColor });
+      }
+      return;
+    }
+
+    // LineString / MultiGeometry LineString → track
+    const lineCoords = [];
+    pm.querySelectorAll('LineString > coordinates, MultiGeometry LineString > coordinates').forEach(c => {
+      c.textContent.trim().split(/\s+/).forEach(coord => {
+        const [lng, lat] = coord.split(',').map(Number);
+        if (!isNaN(lat) && !isNaN(lng)) lineCoords.push([lat, lng]);
+      });
+    });
+    if (lineCoords.length > 1) {
+      tracks.push({ name: pmName, desc: pmDesc, coords: lineCoords, color: pmStyle.lineColor });
+      return;
+    }
+
+    // Polygon
+    const poly = pm.querySelector('Polygon outerBoundaryIs LinearRing coordinates');
+    if (poly) {
+      const coords = poly.textContent.trim().split(/\s+/).map(c => {
+        const [lng, lat] = c.split(',').map(Number);
+        return [lat, lng];
+      }).filter(c => !isNaN(c[0]));
+      if (coords.length > 2) {
+        polygons.push({ name: pmName, desc: pmDesc, coords, color: pmStyle.lineColor });
+      }
+    }
+  });
+
+  // ── gx:Track / gx:MultiTrack ──────────────────
+  const ns = 'http://www.google.com/kml/ext/2.2';
+  doc.querySelectorAll('Placemark').forEach(pm => {
+    const pmName = pm.querySelector('name')?.textContent?.trim() || 'Track GPS';
+    const gxTrack = pm.getElementsByTagNameNS(ns, 'Track');
+    if (!gxTrack.length) return;
+    const coords = [];
+    Array.from(gxTrack[0].getElementsByTagNameNS(ns, 'coord')).forEach(c => {
+      const [lng, lat] = c.textContent.trim().split(' ').map(Number);
+      if (!isNaN(lat) && !isNaN(lng)) coords.push([lat, lng]);
+    });
+    if (coords.length > 1) tracks.push({ name: pmName, coords, color: null });
+  });
+
+  return { name: docName, desc: docDesc, waypoints, tracks, polygons, raw: text };
+}
+
+function getPlacemarkStyle(pm, doc) {
+  let iconColor = '#f55252';
+  let lineColor = '#4c8cf8';
+  // Coba baca style langsung atau referensi styleUrl
+  const styleUrl = pm.querySelector('styleUrl')?.textContent?.trim().replace('#','');
+  if (styleUrl) {
+    const styleEl = doc.querySelector(`Style[id="${styleUrl}"], StyleMap[id="${styleUrl}"]`);
+    if (styleEl) {
+      const ic = styleEl.querySelector('IconStyle > color')?.textContent;
+      if (ic) iconColor = kmlColorToHex(ic);
+      const lc = styleEl.querySelector('LineStyle > color')?.textContent;
+      if (lc) lineColor = kmlColorToHex(lc);
+    }
+  }
+  const directIc = pm.querySelector('Style > IconStyle > color')?.textContent;
+  if (directIc) iconColor = kmlColorToHex(directIc);
+  const directLc = pm.querySelector('Style > LineStyle > color')?.textContent;
+  if (directLc) lineColor = kmlColorToHex(directLc);
+  return { iconColor, lineColor };
+}
+
+// KML warna: aabbggrr → #rrggbb
+function kmlColorToHex(kmlColor) {
+  if (!kmlColor || kmlColor.length < 6) return '#4c8cf8';
+  const c = kmlColor.replace(/\s/g,'').padStart(8,'0');
+  const r = c.substr(6,2), g = c.substr(4,2), b = c.substr(2,2);
+  return '#' + r + g + b;
+}
+
+// ── RENDER KML ON MAP ─────────────────────────────
+function renderKmlOnMap() {
+  // Hapus layer KML lama
+  kmlLayers.forEach(l => map.removeLayer(l));
+  kmlLayers = [];
+
+  if (!kmlData) return;
+  const bounds = [];
+
+  // Tracks
+  kmlData.tracks.forEach((t, i) => {
+    const color = t.color || TRACK_COLORS[i % TRACK_COLORS.length];
+    const layer = L.polyline(t.coords, {
+      color, weight: 4, opacity: 0.85,
+      lineCap: 'round', lineJoin: 'round',
+      dashArray: null
+    }).addTo(map);
+    layer.bindPopup(`<b>${t.name}</b>${t.desc ? '<br>'+t.desc.substring(0,100) : ''}`);
+    kmlLayers.push(layer);
+    t.coords.forEach(c => bounds.push(c));
+    t._leafletColor = color;
+  });
+
+  // Polygons
+  kmlData.polygons.forEach(p => {
+    const color = p.color || '#f5a623';
+    const layer = L.polygon(p.coords, {
+      color, fillColor: color, fillOpacity: 0.15, weight: 2
+    }).addTo(map);
+    layer.bindPopup(`<b>${p.name}</b>`);
+    kmlLayers.push(layer);
+    p.coords.forEach(c => bounds.push(c));
+  });
+
+  // Waypoints
+  kmlData.waypoints.forEach(wp => {
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="width:14px;height:14px;background:${wp.color||'#f55252'};border:2.5px solid #fff;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.5)"></div>`,
+      iconSize: [14,14], iconAnchor: [7,7]
+    });
+    const layer = L.marker([wp.lat, wp.lng], {icon}).addTo(map);
+    layer.bindPopup(`<b>${wp.name}</b>${wp.desc ? '<br>'+wp.desc.substring(0,120) : ''}`);
+    kmlLayers.push(layer);
+    bounds.push([wp.lat, wp.lng]);
+  });
+
+  if (bounds.length) {
+    map.fitBounds(L.latLngBounds(bounds).pad(0.1));
+  }
+}
+
+// ── KML DRAWER UI ─────────────────────────────────
+function showKmlDrawerLoaded(filename) {
+  document.getElementById('kmlLoadedName').textContent = filename;
+  document.getElementById('kmlLoadedBar').style.display = 'flex';
+  document.getElementById('kmlTabs').style.display = 'flex';
+  document.getElementById('kmlSubText').textContent =
+    `${kmlData.waypoints.length} waypoint · ${kmlData.tracks.length} track · ${kmlData.polygons.length} area`;
+  renderKmlTab('waypoints');
+  setKmlTab('waypoints');
+}
+
+function setKmlTab(tab) {
+  kmlTab = tab;
+  document.querySelectorAll('.kml-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === tab);
+  });
+  renderKmlTab(tab);
+}
+
+function renderKmlTab(tab) {
+  const content = document.getElementById('kmlContent');
+  if (!kmlData) return;
+
+  if (tab === 'waypoints') {
+    if (!kmlData.waypoints.length) {
+      content.innerHTML = '<div class="kml-empty">Tidak ada waypoint di file ini</div>';
+      return;
+    }
+    content.innerHTML = kmlData.waypoints.map((wp, i) => `
+      <div class="kml-item" data-wp="${i}">
+        <div class="kml-item-icon" style="background:${wp.color||'#f55252'}22">
+          <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="${wp.color||'#f55252'}" stroke-width="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+        </div>
+        <div class="kml-item-text">
+          <div class="kml-item-name">${wp.name}</div>
+          <div class="kml-item-meta">${wp.lat.toFixed(5)}, ${wp.lng.toFixed(5)}${wp.desc ? ' · ' + wp.desc.substring(0,40) : ''}</div>
+        </div>
+        <div class="kml-item-action">Navigasi →</div>
+      </div>
+    `).join('');
+    content.querySelectorAll('[data-wp]').forEach(el => {
+      el.addEventListener('click', () => {
+        const wp = kmlData.waypoints[+el.dataset.wp];
+        closeKmlDrawer();
+        selectDestination(wp.lat, wp.lng, wp.name);
+      });
+    });
+
+  } else if (tab === 'tracks') {
+    if (!kmlData.tracks.length) {
+      content.innerHTML = '<div class="kml-empty">Tidak ada track di file ini</div>';
+      return;
+    }
+    content.innerHTML = kmlData.tracks.map((t, i) => {
+      const color = t._leafletColor || t.color || TRACK_COLORS[i % TRACK_COLORS.length];
+      const dist  = calcTrackLength(t.coords);
+      const last  = t.coords[t.coords.length-1];
+      return `
+      <div class="kml-item kml-track-item" style="border-left-color:${color}" data-track="${i}">
+        <div class="kml-item-icon" style="background:${color}22">
+          <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="${color}" stroke-width="2.5"><path d="M3 17l4-8 4 4 4-8 4 4"/></svg>
+        </div>
+        <div class="kml-item-text">
+          <div class="kml-item-name">${t.name}</div>
+          <div class="kml-item-meta">${t.coords.length} titik · ${fmtDistStr(dist)}</div>
+        </div>
+        <div class="kml-item-action">Ikuti →</div>
+      </div>`;
+    }).join('');
+    content.querySelectorAll('[data-track]').forEach(el => {
+      el.addEventListener('click', () => {
+        const idx = +el.dataset.track;
+        closeKmlDrawer();
+        selectKmlTrack(idx);
+      });
+    });
+
+  } else if (tab === 'info') {
+    const total = kmlData.waypoints.length + kmlData.tracks.length + kmlData.polygons.length;
+    const totalTrackDist = kmlData.tracks.reduce((s,t) => s + calcTrackLength(t.coords), 0);
+    content.innerHTML = `
+      <div style="padding:16px">
+        <div class="dest-info" style="margin-bottom:12px">
+          <div class="dest-label">Nama File</div>
+          <div class="dest-name">${kmlData.name}</div>
+          ${kmlData.desc ? `<div class="dest-meta">${kmlData.desc.substring(0,200)}</div>` : ''}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          ${statCard('📍 Waypoint', kmlData.waypoints.length)}
+          ${statCard('🛣️ Track', kmlData.tracks.length)}
+          ${statCard('⬡ Area', kmlData.polygons.length)}
+          ${statCard('📏 Total Track', fmtDistStr(totalTrackDist))}
+        </div>
+        <button class="btn btn-red" id="btnKmlClearAll" style="margin-top:12px;width:100%">
+          Hapus File & Layer
+        </button>
+      </div>`;
+    document.getElementById('btnKmlClearAll')?.addEventListener('click', clearKmlAll);
+  }
+}
+
+function statCard(label, val) {
+  return `<div style="background:var(--card2);border-radius:10px;padding:12px;text-align:center">
+    <div style="font-size:20px;font-weight:700">${val}</div>
+    <div style="font-size:11px;color:var(--muted);margin-top:2px">${label}</div>
+  </div>`;
+}
+
+function calcTrackLength(coords) {
+  let d = 0;
+  for (let i = 1; i < coords.length; i++) {
+    d += distToPoint(coords[i-1][0], coords[i-1][1], coords[i][0], coords[i][1]);
+  }
+  return d;
+}
+
+function clearKmlAll() {
+  kmlLayers.forEach(l => map.removeLayer(l));
+  kmlLayers = [];
+  kmlData = null;
+  // Reset drawer ke upload zone
+  document.getElementById('kmlLoadedBar').style.display = 'none';
+  document.getElementById('kmlTabs').style.display = 'none';
+  document.getElementById('kmlSubText').textContent = 'Upload file KML atau KMZ untuk tampilkan di peta';
+  document.getElementById('kmlContent').innerHTML = `
+    <div id="kmlUploadZone">
+      <input type="file" id="kmlFileInput" accept=".kml,.kmz">
+      <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" style="display:block;margin:0 auto 8px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <p><strong>Ketuk untuk upload</strong></p>
+      <p>atau drag & drop file</p>
+      <p style="margin-top:8px;font-size:11px;opacity:0.6">.kml &nbsp;·&nbsp; .kmz</p>
+    </div>`;
+  bindUploadZone();
+}
+
+function closeKmlDrawer() {
+  document.getElementById('kmlDrawer').style.display = 'none';
+}
+
+function bindUploadZone() {
+  const zone = document.getElementById('kmlUploadZone');
+  const input = document.getElementById('kmlFileInput');
+  if (!zone || !input) return;
+
+  zone.addEventListener('click', () => input.click());
+  input.addEventListener('change', e => {
+    if (e.target.files[0]) handleKmlFile(e.target.files[0]);
+  });
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) handleKmlFile(e.dataTransfer.files[0]);
+  });
+}
+
+// KML button
+document.getElementById('btnKml').addEventListener('click', () => {
+  document.getElementById('kmlDrawer').style.display = 'flex';
+});
+
+document.getElementById('btnKmlClose').addEventListener('click', closeKmlDrawer);
+document.getElementById('btnKmlReset').addEventListener('click', clearKmlAll);
+
+document.getElementById('kmlDrawer').addEventListener('click', e => {
+  if (e.target === document.getElementById('kmlDrawer')) closeKmlDrawer();
+});
+
+// KML tabs
+document.querySelectorAll('.kml-tab').forEach(tab => {
+  tab.addEventListener('click', () => setKmlTab(tab.dataset.tab));
+});
+
+// Upload zone awal
+bindUploadZone();
+
+// ── INIT ──────────────────────────────────────────
+startGPS();
+
+// Auto connect MQTT
+setTimeout(connectMqtt, 1000);
+
+</script>
+</body>
+</html>
